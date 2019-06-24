@@ -57,6 +57,7 @@ class AppConfig(config: Config) {
     val refreshFrequencyMs: Int = ksmConfig.getInt("refresh.frequency.ms")
     val extract: Boolean = ksmConfig.getBoolean("extract")
     val readOnly: Boolean = ksmConfig.getBoolean("readonly")
+    val exclusiveManagement: Boolean = ksmConfig.getBoolean("exclusive-management")
   }
 
   object Parser {

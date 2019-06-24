@@ -55,11 +55,14 @@ class AclSynchronizer(authorizer: Authorizer,
                       sourceAcl: SourceAcl,
                       notification: Notification,
                       aclParser: AclParser,
-                      readOnly: Boolean = false) extends Runnable {
+                      readOnly: Boolean = false,
+                      exclusiveManagement: Boolean = false
+                     ) extends Runnable {
 
   import AclSynchronizer._
 
   private var sourceAclsCache: Set[(Resource, Acl)] = _
+  private var kafkaAclsCache:  Set[(Resource, Acl)] = _
 
   if (readOnly) {
     log.warn("""
@@ -68,6 +71,17 @@ class AclSynchronizer(authorizer: Authorizer,
         |==========   To disable: KSM_READONLY=false   =========
         |=======================================================
       """.stripMargin)
+  }
+  if (exclusiveManagement) {
+    log.warn("""
+       |=====================================================
+       |===     EXCLUSIVE MANAGEMENT mode is activated    ===
+       |===     THIS VIOLATES SECURITY FEATURE OF KSM     ===
+       |===  Use it ONLY WHEN NO ONE ELSE CAN CHANGE ACL  ===
+       |===       (including other KSM instances)         ===
+       |===   To disable: KSM_EXCLUSIVE_MANAGEMENT=false  ===
+       |=====================================================
+     """.stripMargin)
   }
 
   def run(): Unit = if (!readOnly) {
@@ -78,7 +92,7 @@ class AclSynchronizer(authorizer: Authorizer,
         result match {
           // the source has not changed
           case None =>
-            if (sourceAclsCache != null) {
+            if (sourceAclsCache != null && !exclusiveManagement) {
               // the Kafka Acls may have changed so we check against the last known correct SourceAcl that we cached
               applySourceAcls(sourceAclsCache,
                               getKafkaAcls,
@@ -95,6 +109,9 @@ class AclSynchronizer(authorizer: Authorizer,
                               getKafkaAcls,
                               notification,
                               authorizer)
+              if (exclusiveManagement) {
+                kafkaAclsCache = acls
+              }
             } else {
               try {
                 log.error("Exceptions while refreshing ACL source:")
@@ -109,8 +126,17 @@ class AclSynchronizer(authorizer: Authorizer,
     }
   }
 
-  def getKafkaAcls: Set[(Resource, Acl)] =
-    flattenKafkaAcls(authorizer.getAcls())
+  def getKafkaAcls: Set[(Resource, Acl)] = {
+    lazy val actualData = flattenKafkaAcls(authorizer.getAcls())
+    if (exclusiveManagement) synchronized {
+      if (kafkaAclsCache == null) {
+        kafkaAclsCache = actualData
+      }
+      kafkaAclsCache
+    } else {
+      actualData
+    }
+  }
 
   def close(): Unit = {
     authorizer.close()

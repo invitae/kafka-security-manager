@@ -6,7 +6,7 @@ services:
   - docker
 
 scala:
-  - 2.12.4
+  - 2.12.8
 
 before_install:
 - if [ $TRAVIS_PULL_REQUEST = 'false' ]; then openssl aes-256-cbc -K $encrypted_575a6d494c46_key

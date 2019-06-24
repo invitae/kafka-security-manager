@@ -259,4 +259,43 @@ class AclSynchronizerTest extends FlatSpec with EmbeddedKafka with Matchers with
     }
   }
 
+  "exclusive management" should "prevent unnecessary kafka acl listing" in {
+
+    val dummySourceAcl = new DummySourceAcl
+    val configs = Map(
+      "zookeeper.connect" -> s"localhost:${EmbeddedKafkaConfig.defaultConfig.zooKeeperPort}",
+    )
+
+    val spyableAuthorizer = new SimpleAclAuthorizer {
+      def getAclNoSpy(): Map[Resource, Set[Acl]] = super.getAcls()
+      private var _getAclCalledTimes = 0
+      def getAclCalledTimes: Int = _getAclCalledTimes
+      override def getAcls(): Map[Resource, Set[Acl]] = {
+        _getAclCalledTimes += 1
+        getAclNoSpy()
+      }
+    }
+
+    val aclSynchronizer: AclSynchronizer = new AclSynchronizer(
+      spyableAuthorizer, dummySourceAcl, new ConsoleNotification, aclParser,
+      exclusiveManagement = true
+    )
+    withRunningKafka {
+      spyableAuthorizer.configure(configs.asJava)
+      eventually(timeout(3000 milliseconds), interval(200 milliseconds)) {
+        spyableAuthorizer.getAclNoSpy() shouldBe Map.empty
+      }
+      // transition to next state happens each time `.refresh(...)` called internally per synchronizer.run
+      dummySourceAcl.sars.foreach(
+        sourceAclResult => {
+          aclSynchronizer.run()
+          eventually(timeout(3000 milliseconds), interval(200 milliseconds)) {
+            aclSynchronizer.getKafkaAcls shouldBe sourceAclResult.acls
+          }
+        }
+      )
+      spyableAuthorizer.getAclCalledTimes shouldBe 1
+      aclSynchronizer.close()
+    }
+  }
 }
